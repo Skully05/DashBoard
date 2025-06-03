@@ -7,7 +7,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import logging
-from database import db_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -15,11 +14,114 @@ logger = logging.getLogger(__name__)
 
 # Page configuration - MUST be first
 st.set_page_config(
-    page_title="Prompt Review Dashboard",
-    page_icon="📝",
+    page_title="PostgreSQL Analytics Dashboard",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# Try to import database manager
+try:
+    from database import db_manager
+    DATABASE_AVAILABLE = db_manager is not None and (hasattr(db_manager, 'is_configured') and db_manager.is_configured)
+except Exception as e:
+    logger.error(f"Database import failed: {e}")
+    db_manager = None
+    DATABASE_AVAILABLE = False
+
+def show_configuration_help():
+    """Show database configuration help."""
+    st.markdown('<div class="main-header">🔧 Database Configuration Required</div>', unsafe_allow_html=True)
+    
+    st.warning("⚠️ Database configuration is missing or incomplete!")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📋 Configuration Status")
+        if db_manager:
+            config_status = db_manager.get_configuration_status()
+            if config_status['missing_fields']:
+                st.error(f"❌ Missing: {', '.join(config_status['missing_fields'])}")
+            
+            st.markdown("### ✅ Available Configuration")
+            for key, available in config_status['available_config'].items():
+                status = "✅" if available else "❌"
+                st.write(f"{status} {key.upper()}: {'Configured' if available else 'Missing'}")
+            
+            password_status = "✅" if config_status['password_configured'] else "❌"
+            st.write(f"{password_status} PASSWORD: {'Configured' if config_status['password_configured'] else 'Missing'}")
+        else:
+            st.error("❌ Database manager could not be initialized")
+    
+    with col2:
+        st.markdown("### 🔧 How to Configure")
+        
+        tab1, tab2 = st.tabs(["Streamlit Cloud", "Local Development"])
+        
+        with tab1:
+            st.markdown("""
+            **For Streamlit Cloud deployment:**
+            
+            1. Go to your app dashboard
+            2. Click **"⚙️ Settings"** (or "Manage app")
+            3. Click **"Secrets"** in the sidebar
+            4. Add your database configuration:
+            
+            ```toml
+            DB_HOST = "your_database_host"
+            DB_PORT = "5432"
+            DB_NAME = "your_database_name"
+            DB_USER = "your_username"
+            DB_PASSWORD = "your_password"
+            DB_SSL_MODE = "prefer"
+            ```
+            
+            5. Click **"Save"**
+            6. **Reboot** the app
+            """)
+            
+            st.info("💡 **Tip**: Make sure your database allows connections from Streamlit Cloud's IP ranges.")
+        
+        with tab2:
+            st.markdown("""
+            **For local development:**
+            
+            1. Create a `.env` file in your project directory
+            2. Add your database configuration:
+            
+            ```env
+            DB_HOST=your_database_host
+            DB_PORT=5432
+            DB_NAME=your_database_name
+            DB_USER=your_username
+            DB_PASSWORD=your_password
+            DB_SSL_MODE=prefer
+            ```
+            
+            3. Restart the application
+            """)
+            
+            st.info("💡 **Tip**: Use the `start_dashboard.bat` or `start_dashboard.sh` scripts for easier setup.")
+    
+    st.markdown("### 🔍 Testing Connection")
+    if st.button("🔄 Test Database Connection"):
+        if db_manager and db_manager.is_configured:
+            if db_manager.test_connection():
+                st.success("✅ Database connection successful!")
+                st.rerun()
+            else:
+                st.error("❌ Database connection failed. Check your configuration and network connectivity.")
+        else:
+            st.error("❌ Database not configured. Please add your database secrets first.")
+    
+    st.markdown("---")
+    st.markdown("### 📚 Need Help?")
+    st.markdown("""
+    - **Documentation**: Check the `DEPLOYMENT.md` file
+    - **Troubleshooting**: See `DEPENDENCY_TROUBLESHOOTING.md`
+    - **Local Setup**: Use the provided startup scripts
+    """)
 
 # Custom CSS
 st.markdown("""
@@ -102,6 +204,9 @@ st.markdown("""
 
 def get_prompt_reviews():
     """Get prompt reviews with user information."""
+    if not DATABASE_AVAILABLE:
+        return pd.DataFrame()
+    
     query = """
     SELECT 
         u.name AS user_name,
@@ -128,6 +233,9 @@ def get_prompt_reviews():
 
 def get_total_enhanced_prompts():
     """Get total count of enhanced prompts."""
+    if not DATABASE_AVAILABLE:
+        return 0
+        
     query = """
     SELECT COUNT(id) AS total_prompts FROM prompt_review
     """
@@ -140,6 +248,9 @@ def get_total_enhanced_prompts():
 
 def get_avg_daily_users():
     """Get average daily users."""
+    if not DATABASE_AVAILABLE:
+        return 0
+        
     query = """
     WITH daily_users AS (
         SELECT DATE_TRUNC('day', created_at) AS day, 
@@ -159,6 +270,9 @@ def get_avg_daily_users():
 
 def get_avg_weekly_users():
     """Get average weekly users."""
+    if not DATABASE_AVAILABLE:
+        return 0
+        
     query = """
     WITH daily_users AS (
         SELECT DATE_TRUNC('day', created_at) AS day, 
@@ -184,6 +298,9 @@ def get_avg_weekly_users():
 
 def get_most_used_ai():
     """Get most used AI type."""
+    if not DATABASE_AVAILABLE:
+        return "N/A"
+        
     query = """
     SELECT llm_used, COUNT(*) as count 
     FROM prompt_review 
@@ -202,6 +319,9 @@ def get_most_used_ai():
 
 def get_total_users():
     """Get total count of users."""
+    if not DATABASE_AVAILABLE:
+        return 0
+        
     query = """
     SELECT COUNT(DISTINCT user_id) AS total_users 
     FROM usertable 
@@ -217,6 +337,10 @@ def get_total_users():
 def show_prompt_reviews_table():
     """Display prompt reviews table."""
     st.markdown('<div class="section-header">📝 Prompt Reviews (Latest First)</div>', unsafe_allow_html=True)
+    
+    if not DATABASE_AVAILABLE:
+        st.warning("⚠️ Database not configured. Please configure your database connection to view data.")
+        return
     
     reviews_data = get_prompt_reviews()
     if reviews_data.empty:
@@ -339,6 +463,66 @@ def show_top_metrics():
     """Display top 5 metrics in circular format."""
     st.markdown('<div class="section-header">📊 Key Metrics Overview</div>', unsafe_allow_html=True)
     
+    if not DATABASE_AVAILABLE:
+        st.warning("⚠️ Database not configured. Showing demo data.")
+        # Show demo metrics
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.markdown("""
+            <div class="circular-metric">
+                <div class="circle circle-1">
+                    <div class="circle-number">0</div>
+                    <div class="circle-label">Enhanced</div>
+                </div>
+                <div class="metric-title">Total Enhanced Prompts</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("""
+            <div class="circular-metric">
+                <div class="circle circle-2">
+                    <div class="circle-number">0</div>
+                    <div class="circle-label">Daily Avg</div>
+                </div>
+                <div class="metric-title">Average Daily Users</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            st.markdown("""
+            <div class="circular-metric">
+                <div class="circle circle-3">
+                    <div class="circle-number">0</div>
+                    <div class="circle-label">Weekly Avg</div>
+                </div>
+                <div class="metric-title">Average Weekly Users</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            st.markdown("""
+            <div class="circular-metric">
+                <div class="circle circle-4">
+                    <div class="circle-number" style="font-size: 1.0rem;">N/A</div>
+                </div>
+                <div class="metric-title">Most Used AI</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col5:
+            st.markdown("""
+            <div class="circular-metric">
+                <div class="circle circle-5">
+                    <div class="circle-number">0</div>
+                    <div class="circle-label">Total</div>
+                </div>
+                <div class="metric-title">Total Users</div>
+            </div>
+            """, unsafe_allow_html=True)
+        return
+    
     # Get all metrics
     total_prompts = get_total_enhanced_prompts()
     avg_daily = get_avg_daily_users()
@@ -416,8 +600,13 @@ def show_top_metrics():
 
 def main():
     """Main dashboard function."""
+    # Check if database is configured
+    if not DATABASE_AVAILABLE:
+        show_configuration_help()
+        return
+    
     # Header
-    st.markdown('<h1 class="main-header">📝 Prompt Review Dashboard</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 PostgreSQL Analytics Dashboard</h1>', unsafe_allow_html=True)
     
     # Connection status
     try:
@@ -425,10 +614,12 @@ def main():
             st.success("✅ Database connected successfully")
         else:
             st.error("❌ Database connection failed")
-            st.stop()
+            show_configuration_help()
+            return
     except Exception as e:
         st.error(f"❌ Database connection error: {e}")
-        st.stop()
+        show_configuration_help()
+        return
     
     # Auto-refresh controls
     col1, col2, col3 = st.columns([1, 1, 2])
@@ -462,7 +653,7 @@ def main():
     # Dashboard info
     st.sidebar.markdown("## 📊 Dashboard Info")
     st.sidebar.info(f"""
-    **Dashboard:** Prompt Review Analytics
+    **Dashboard:** PostgreSQL Analytics
     **Data Source:** prompt_review + usertable
     **Features:**
     - Key metrics overview (5 circular displays)

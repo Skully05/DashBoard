@@ -27,7 +27,7 @@ def get_db_config():
         import streamlit as st
         
         # If running in Streamlit Cloud, use secrets
-        if hasattr(st, 'secrets'):
+        if hasattr(st, 'secrets') and hasattr(st.secrets, 'get'):
             return {
                 'host': st.secrets.get('DB_HOST', 'localhost'),
                 'port': int(st.secrets.get('DB_PORT', 5432)),
@@ -38,6 +38,8 @@ def get_db_config():
             }
     except ImportError:
         pass
+    except Exception as e:
+        logger.warning(f"Could not access Streamlit secrets: {e}")
     
     # Fallback to environment variables
     return {
@@ -56,16 +58,22 @@ class DatabaseManager:
     def __init__(self):
         """Initialize database manager with connection parameters from environment or Streamlit secrets."""
         self.db_config = get_db_config()
+        self.engine = None
+        self.connection_string = None
+        self.is_configured = False
         
         # Validate required configuration
         required_fields = ['database', 'user', 'password']
-        missing_fields = [field for field in required_fields if not self.db_config[field]]
+        missing_fields = [field for field in required_fields if not self.db_config.get(field)]
         
         if missing_fields:
-            raise ValueError(f"Missing required database configuration: {missing_fields}")
-        
-        self.engine = None
-        self.connection_string = self._build_connection_string()
+            logger.warning(f"Missing required database configuration: {missing_fields}")
+            self.missing_fields = missing_fields
+            # Don't raise error immediately - let the app start and show a configuration message
+        else:
+            self.missing_fields = []
+            self.is_configured = True
+            self.connection_string = self._build_connection_string()
     
     def _build_connection_string(self) -> str:
         """Build PostgreSQL connection string."""
@@ -75,8 +83,20 @@ class DatabaseManager:
             f"?sslmode={self.db_config['sslmode']}"
         )
     
+    def get_configuration_status(self) -> Dict[str, Any]:
+        """Get configuration status for display in the app."""
+        return {
+            'is_configured': self.is_configured,
+            'missing_fields': self.missing_fields,
+            'available_config': {k: bool(v) for k, v in self.db_config.items() if k != 'password'},
+            'password_configured': bool(self.db_config.get('password'))
+        }
+    
     def get_engine(self):
         """Get or create SQLAlchemy engine."""
+        if not self.is_configured:
+            raise ValueError("Database not configured. Please check your environment variables or Streamlit secrets.")
+        
         if self.engine is None:
             try:
                 self.engine = create_engine(
@@ -94,6 +114,9 @@ class DatabaseManager:
     
     def test_connection(self) -> bool:
         """Test database connection."""
+        if not self.is_configured:
+            return False
+            
         try:
             engine = self.get_engine()
             with engine.connect() as conn:
@@ -116,6 +139,9 @@ class DatabaseManager:
         Returns:
             pandas.DataFrame with query results
         """
+        if not self.is_configured:
+            raise ValueError("Database not configured. Please check your environment variables or Streamlit secrets.")
+        
         # Security check: ensure query is read-only
         query_upper = query.strip().upper()
         
@@ -151,6 +177,9 @@ class DatabaseManager:
         Returns:
             Dictionary with table names and their column info
         """
+        if not self.is_configured:
+            return {}
+            
         try:
             engine = self.get_engine()
             inspector = inspect(engine)
@@ -185,6 +214,9 @@ class DatabaseManager:
             Formatted string describing database schema
         """
         schema_info = self.get_schema_info()
+        if not schema_info:
+            return "No schema information available. Please check database configuration."
+        
         schema_parts = []
         
         for table_name, columns in schema_info.items():
@@ -217,4 +249,9 @@ class DatabaseManager:
 
 
 # Global database manager instance
-db_manager = DatabaseManager() 
+try:
+    db_manager = DatabaseManager()
+except Exception as e:
+    logger.error(f"Failed to initialize database manager: {e}")
+    # Create a minimal db_manager for graceful error handling
+    db_manager = None 
