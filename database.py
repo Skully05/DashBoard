@@ -20,19 +20,42 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def get_db_config():
+    """Get database configuration from environment variables or Streamlit secrets."""
+    try:
+        # Try to import streamlit to check if running in Streamlit Cloud
+        import streamlit as st
+        
+        # If running in Streamlit Cloud, use secrets
+        if hasattr(st, 'secrets'):
+            return {
+                'host': st.secrets.get('DB_HOST', 'localhost'),
+                'port': int(st.secrets.get('DB_PORT', 5432)),
+                'database': st.secrets.get('DB_NAME'),
+                'user': st.secrets.get('DB_USER'),
+                'password': st.secrets.get('DB_PASSWORD'),
+                'sslmode': st.secrets.get('DB_SSL_MODE', 'prefer')
+            }
+    except ImportError:
+        pass
+    
+    # Fallback to environment variables
+    return {
+        'host': os.getenv('DB_HOST', 'localhost'),
+        'port': int(os.getenv('DB_PORT', 5432)),
+        'database': os.getenv('DB_NAME'),
+        'user': os.getenv('DB_USER'),
+        'password': os.getenv('DB_PASSWORD'),
+        'sslmode': os.getenv('DB_SSL_MODE', 'prefer')
+    }
+
+
 class DatabaseManager:
     """Manages PostgreSQL database connections and operations."""
     
     def __init__(self):
-        """Initialize database manager with connection parameters from environment."""
-        self.db_config = {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'port': int(os.getenv('DB_PORT', 5432)),
-            'database': os.getenv('DB_NAME'),
-            'user': os.getenv('DB_USER'),
-            'password': os.getenv('DB_PASSWORD'),
-            'sslmode': os.getenv('DB_SSL_MODE', 'prefer')
-        }
+        """Initialize database manager with connection parameters from environment or Streamlit secrets."""
+        self.db_config = get_db_config()
         
         # Validate required configuration
         required_fields = ['database', 'user', 'password']
